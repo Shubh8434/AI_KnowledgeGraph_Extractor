@@ -1,0 +1,9 @@
+John Doe is the CEO of Acme Corporation, headquartered in New York City.
+    Jane Smith founded TechStart in San Francisco in 2020.
+    In 2024, Acme Corporation acquired TechStart for $50 million.
+    John Doe manages the Engineering Department at Acme.
+    Sarah Johnson works as a Senior Engineer at Acme Corporation.
+    TechStart developed an AI platform called SmartBot.
+    SmartBot is used by companies worldwide.
+    Jane Smith now serves as CTO of Acme Corporation.
+    The Engineering Department is located in the New York office.

@@ -1,0 +1,52 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# PIP
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Pytest
+.cache
+.pytest_cache/
+
+# SQLite database (if used)
+*.sqlite3
+*.db
+
+# Logs
+*.log
+
+# FastAPI / Uvicorn
+*.pid
+*.sock
+
+# VSCode
+.vscode/
+
+# PyCharm
+.idea/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Files uploaded by your app
+uploads/
+media/
+
+# Secrets
+.env
+.env.*
