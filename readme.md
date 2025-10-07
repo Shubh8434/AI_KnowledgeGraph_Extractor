@@ -4,23 +4,36 @@ A FastAPI-based backend system that extracts entities and relationships from doc
 
 ## Features
 
-✅ **Document Upload**: Support for PDF, DOCX, TXT, CSV files  
+✅ **Document Upload**: Support for PDF, DOCX, TXT, CSV files with security validation  
 ✅ **AI Entity Extraction**: Automatic extraction of nodes (entities) and edges (relationships)  
 ✅ **Version Control**: Maintain complete graph history for each document  
 ✅ **RESTful API**: Clean JSON endpoints for all operations  
 ✅ **Dual LLM Support**: Works with Ollama (local) or OpenAI API  
+✅ **Database Migrations**: Alembic-based schema management  
+✅ **Input Validation**: Comprehensive validation for all inputs  
+✅ **Security Features**: File upload security, path traversal protection  
+✅ **Performance Optimization**: Batched database operations, optimized queries  
+✅ **Error Handling**: Centralized error handling with detailed logging  
+✅ **Sample Data**: Pre-populated sample data for testing  
 
 ## Architecture
 
 ```
 ├── main.py              # FastAPI application & routes
-├── models.py            # SQLAlchemy database models
+├── models.py            # SQLAlchemy database models with constraints
 ├── schemas.py           # Pydantic schemas for validation
 ├── database.py          # Database configuration
+├── database_service.py  # Optimized database operations
 ├── services.py          # Document processing & KG extraction
+├── validators.py        # Input validation and sanitization
+├── security.py          # Security and file upload protection
+├── error_handlers.py    # Centralized error handling
 ├── config.py            # Application configuration
 ├── requirements.txt     # Python dependencies
 ├── .env.example         # Environment variables template
+├── migrate.py           # Database migration management
+├── seed_data.py         # Sample data generation
+├── alembic/             # Database migration files
 └── uploads/             # Document storage directory
 ```
 
@@ -68,7 +81,20 @@ cp .env.example .env
 nano .env
 ```
 
-### 4. Run the Application
+### 4. Initialize Database and Seed Data
+
+```bash
+# Initialize database with migrations
+python migrate.py init
+
+# Seed with sample data
+python migrate.py seed
+
+# Or reset everything (migrations + seed)
+python migrate.py reset
+```
+
+### 5. Run the Application
 
 ```bash
 # Start the server
@@ -90,6 +116,41 @@ http://localhost:8000
 ### Interactive API Docs
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
+
+---
+
+## New Features & Improvements
+
+### 🔒 Security Enhancements
+- **File Upload Security**: Comprehensive validation of file types, sizes, and content
+- **Path Traversal Protection**: Prevents directory traversal attacks
+- **MIME Type Validation**: Validates file content matches declared type
+- **Suspicious Content Detection**: Scans for embedded scripts and executables
+- **Safe Filename Generation**: Prevents filename-based attacks
+
+### ✅ Input Validation
+- **Comprehensive Validation**: All inputs validated with detailed error messages
+- **File Size Limits**: Configurable maximum file size (default: 10MB)
+- **Filename Sanitization**: Removes dangerous characters and patterns
+- **JSON Response Validation**: Robust parsing of LLM responses with fallbacks
+
+### 🚀 Performance Optimizations
+- **Batched Database Operations**: Reduces N+1 queries and improves performance
+- **Optimized Queries**: Single queries for complex data retrieval
+- **Transaction Management**: Proper transaction handling with rollback support
+- **Database Indexing**: Strategic indexes for faster queries
+
+### 🛠️ Database Management
+- **Alembic Migrations**: Version-controlled database schema changes
+- **Data Integrity**: Comprehensive constraints and foreign key relationships
+- **Sample Data**: Pre-populated test data for development and testing
+- **Migration Scripts**: Easy database setup and updates
+
+### 🔧 Error Handling
+- **Centralized Error Handling**: Consistent error responses across the API
+- **Detailed Logging**: Comprehensive logging for debugging and monitoring
+- **User-Friendly Messages**: Clear error messages for API consumers
+- **Error Tracking**: Unique error IDs for support and debugging
 
 ---
 
@@ -277,6 +338,104 @@ curl -X GET "http://localhost:8000/documents/1/versions/1"
   "version": 1,
   "nodes": [...],
   "edges": [...]
+}
+```
+
+---
+
+### 7. Get Database Statistics
+
+**GET** `/stats`
+
+Get database statistics for monitoring.
+
+**Request:**
+```bash
+curl -X GET "http://localhost:8000/stats"
+```
+
+**Response:**
+```json
+{
+  "total_documents": 3,
+  "total_versions": 3,
+  "total_nodes": 39,
+  "total_edges": 33,
+  "avg_nodes_per_document": 13.0,
+  "avg_edges_per_document": 11.0
+}
+```
+
+---
+
+### 8. Clean Up Old Versions
+
+**POST** `/documents/{document_id}/cleanup`
+
+Clean up old versions of a document, keeping only the most recent ones.
+
+**Request:**
+```bash
+curl -X POST "http://localhost:8000/documents/1/cleanup?keep_versions=5"
+```
+
+**Response:**
+```json
+{
+  "message": "Cleaned up 2 old versions",
+  "document_id": 1,
+  "versions_deleted": 2
+}
+```
+
+---
+
+### 9. Security Scan
+
+**GET** `/security/scan`
+
+Scan upload directory for security issues.
+
+**Request:**
+```bash
+curl -X GET "http://localhost:8000/security/scan"
+```
+
+**Response:**
+```json
+{
+  "total_files": 3,
+  "suspicious_files": [],
+  "large_files": [],
+  "unknown_types": [],
+  "errors": []
+}
+```
+
+---
+
+### 10. Validate File Security
+
+**POST** `/security/validate-file`
+
+Validate file security without processing.
+
+**Request:**
+```bash
+curl -X POST "http://localhost:8000/security/validate-file" \
+  -F "file=@sample.pdf"
+```
+
+**Response:**
+```json
+{
+  "filename": "sample.pdf",
+  "safe_filename": "sample.pdf",
+  "is_safe": true,
+  "reason": "File is safe",
+  "file_size": 1024,
+  "file_hash": "abc123...",
+  "mime_type": "application/pdf"
 }
 ```
 

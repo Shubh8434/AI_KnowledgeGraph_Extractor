@@ -1,12 +1,15 @@
 import os
 import json
 import re
-from typing import Dict, List
+import logging
+from typing import Dict, List, Optional
 import PyPDF2
 import docx
 import csv
 import requests
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentProcessor:
@@ -72,38 +75,118 @@ class KnowledgeGraphExtractor:
     
     def extract_graph(self, text: str) -> Dict:
         """
-        Extract knowledge graph from text using LLM
+        Extract knowledge graph from text using LLM with robust error handling
         """
+        # Validate input text
+        if not text or not text.strip():
+            logger.warning("Empty text provided for extraction")
+            return {"nodes": [], "edges": []}
+        
         # Try OpenAI first if configured
         if self.use_openai and self.openai_key:
             try:
-                print("ℹ️  Using OpenAI for extraction")
-                return self._extract_with_openai(text)
+                logger.info("Using OpenAI for extraction")
+                result = self._extract_with_openai(text)
+                if self._validate_extraction_result(result):
+                    return result
+                else:
+                    logger.warning("OpenAI result validation failed, trying fallback")
             except Exception as e:
-                print(f"⚠️  OpenAI extraction failed: {e}")
+                logger.error(f"OpenAI extraction failed: {e}")
         
         # Check if we should try Ollama
         if not settings.USE_OLLAMA:
-            print("ℹ️  Using rule-based extraction (USE_OLLAMA=False)")
+            logger.info("Using rule-based extraction (USE_OLLAMA=False)")
             return self._extract_with_rules(text)
         
         # Try Ollama
         try:
-            print("ℹ️  Using Ollama for extraction")
-            return self._extract_with_ollama(text)
+            logger.info("Using Ollama for extraction")
+            result = self._extract_with_ollama(text)
+            if self._validate_extraction_result(result):
+                return result
+            else:
+                logger.warning("Ollama result validation failed, trying fallback")
         except Exception as e:
-            print(f"⚠️  Ollama extraction failed: {e}")
-            print("ℹ️  Falling back to rule-based extraction")
-            # Fallback to rule-based extraction
-            return self._extract_with_rules(text)
+            logger.error(f"Ollama extraction failed: {e}")
+        
+        # Fallback to rule-based extraction
+        logger.info("Falling back to rule-based extraction")
+        return self._extract_with_rules(text)
+    
+    def _validate_extraction_result(self, result: Dict) -> bool:
+        """
+        Validate extraction result structure and content
+        
+        Args:
+            result: The extraction result to validate
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        if not isinstance(result, dict):
+            logger.warning("Extraction result is not a dictionary")
+            return False
+        
+        if 'nodes' not in result or 'edges' not in result:
+            logger.warning("Extraction result missing required keys")
+            return False
+        
+        nodes = result.get('nodes', [])
+        edges = result.get('edges', [])
+        
+        if not isinstance(nodes, list) or not isinstance(edges, list):
+            logger.warning("Nodes or edges are not lists")
+            return False
+        
+        # Check for reasonable number of entities
+        if len(nodes) > 1000:
+            logger.warning(f"Too many nodes: {len(nodes)}")
+            return False
+        
+        if len(edges) > 2000:
+            logger.warning(f"Too many edges: {len(edges)}")
+            return False
+        
+        # Validate node structure
+        for i, node in enumerate(nodes):
+            if not isinstance(node, dict):
+                logger.warning(f"Node {i} is not a dictionary")
+                return False
+            
+            required_fields = ['id', 'label', 'type']
+            for field in required_fields:
+                if field not in node or not node[field]:
+                    logger.warning(f"Node {i} missing or empty field: {field}")
+                    return False
+        
+        # Validate edge structure
+        for i, edge in enumerate(edges):
+            if not isinstance(edge, dict):
+                logger.warning(f"Edge {i} is not a dictionary")
+                return False
+            
+            required_fields = ['source', 'target', 'relationship']
+            for field in required_fields:
+                if field not in edge or not edge[field]:
+                    logger.warning(f"Edge {i} missing or empty field: {field}")
+                    return False
+        
+        logger.info(f"Extraction result validated: {len(nodes)} nodes, {len(edges)} edges")
+        return True
     
     def _extract_with_ollama(self, text: str) -> Dict:
         """
-        Use Ollama LLM for extraction
+        Use Ollama LLM for extraction with improved error handling
         """
         prompt = self._create_extraction_prompt(text)
         
         try:
+            # Check if Ollama is available
+            health_response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
+            if health_response.status_code != 200:
+                raise Exception("Ollama service not available")
+            
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json={
@@ -113,35 +196,132 @@ class KnowledgeGraphExtractor:
                     "format": "json",
                     "options": {
                         "temperature": 0.7,
-                        "num_predict": 1000  # Limit response length
+                        "num_predict": 2000,  # Increased for better results
+                        "top_p": 0.9,
+                        "repeat_penalty": 1.1
                     }
                 },
-                timeout=120  # Increased to 2 minutes
+                timeout=settings.OLLAMA_TIMEOUT
             )
             
             if response.status_code == 200:
                 result = response.json()
                 graph_text = result.get('response', '{}')
                 
-                # Parse the JSON response
-                try:
-                    graph_data = json.loads(graph_text)
-                    return self._validate_and_format_graph(graph_data)
-                except json.JSONDecodeError:
-                    # Try to extract JSON from text
-                    return self._extract_json_from_text(graph_text)
+                if not graph_text or graph_text.strip() == '{}':
+                    raise Exception("Empty response from Ollama")
+                
+                # Parse the JSON response with multiple fallback strategies
+                graph_data = self._parse_llm_response(graph_text)
+                return self._validate_and_format_graph(graph_data)
             else:
-                raise Exception(f"Ollama API error: {response.status_code}")
+                error_msg = f"Ollama API error: {response.status_code}"
+                if response.text:
+                    error_msg += f" - {response.text}"
+                raise Exception(error_msg)
+                
         except requests.exceptions.Timeout:
-            print("⚠️  Ollama timeout - using fallback extraction")
+            logger.error("Ollama request timeout")
             raise Exception("Ollama timeout")
         except requests.exceptions.ConnectionError:
-            print("⚠️  Cannot connect to Ollama - using fallback extraction")
+            logger.error("Cannot connect to Ollama")
             raise Exception("Ollama connection error")
+        except Exception as e:
+            logger.error(f"Ollama extraction error: {e}")
+            raise
+    
+    def _parse_llm_response(self, response_text: str) -> Dict:
+        """
+        Parse LLM response with multiple fallback strategies
+        
+        Args:
+            response_text: Raw response from LLM
+            
+        Returns:
+            Parsed graph data
+            
+        Raises:
+            Exception: If parsing fails
+        """
+        if not response_text or not response_text.strip():
+            raise Exception("Empty response from LLM")
+        
+        # Strategy 1: Try to parse as JSON directly
+        try:
+            return json.loads(response_text.strip())
+        except json.JSONDecodeError:
+            pass
+        
+        # Strategy 2: Extract JSON from markdown code blocks
+        json_patterns = [
+            r'```json\s*(\{[\s\S]*?\})\s*```',  # JSON in code block
+            r'```\s*(\{[\s\S]*?\})\s*```',  # Generic code block
+            r'`(\{[\s\S]*?\})`',  # Inline code
+        ]
+        
+        for pattern in json_patterns:
+            matches = re.findall(pattern, response_text, re.DOTALL)
+            for match in matches:
+                try:
+                    return json.loads(match.strip())
+                except json.JSONDecodeError:
+                    continue
+        
+        # Strategy 3: Find JSON object boundaries
+        json_patterns = [
+            r'\{[\s\S]*\}',  # Simple object
+            r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # Nested object
+        ]
+        
+        for pattern in json_patterns:
+            matches = re.findall(pattern, response_text, re.DOTALL)
+            for match in matches:
+                try:
+                    return json.loads(match.strip())
+                except json.JSONDecodeError:
+                    continue
+        
+        # Strategy 4: Try to fix common JSON issues
+        fixed_text = self._fix_common_json_issues(response_text)
+        try:
+            return json.loads(fixed_text)
+        except json.JSONDecodeError:
+            pass
+        
+        # If all strategies fail, raise an exception
+        raise Exception("Could not parse JSON from LLM response")
+    
+    def _fix_common_json_issues(self, text: str) -> str:
+        """
+        Fix common JSON formatting issues in LLM responses
+        
+        Args:
+            text: Raw text that might contain JSON
+            
+        Returns:
+            Potentially fixed JSON text
+        """
+        # Remove any text before the first {
+        start_idx = text.find('{')
+        if start_idx > 0:
+            text = text[start_idx:]
+        
+        # Remove any text after the last }
+        end_idx = text.rfind('}')
+        if end_idx > 0:
+            text = text[:end_idx + 1]
+        
+        # Fix common issues
+        text = re.sub(r',\s*}', '}', text)  # Remove trailing commas
+        text = re.sub(r',\s*]', ']', text)  # Remove trailing commas in arrays
+        text = re.sub(r'([{,]\s*)(\w+):', r'\1"\2":', text)  # Quote unquoted keys
+        text = re.sub(r':\s*([^",{\[\s][^,}]*?)(\s*[,}])', r': "\1"\2', text)  # Quote unquoted string values
+        
+        return text.strip()
     
     def _extract_with_openai(self, text: str) -> Dict:
         """
-        Use OpenAI for extraction
+        Use OpenAI for extraction with improved error handling
         """
         from openai import OpenAI
         
@@ -150,21 +330,26 @@ class KnowledgeGraphExtractor:
         
         try:
             response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=getattr(settings, 'OPENAI_MODEL', 'gpt-3.5-turbo'),
                 messages=[
-                    {"role": "system", "content": "You are an expert at extracting entities and relationships from text. Always return valid JSON."},
+                    {"role": "system", "content": "You are an expert at extracting entities and relationships from text. Always return valid JSON in the exact format specified."},
                     {"role": "user", "content": prompt}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.7
+                temperature=0.7,
+                max_tokens=2000
             )
             
             graph_text = response.choices[0].message.content
-            graph_data = json.loads(graph_text)
+            if not graph_text:
+                raise Exception("Empty response from OpenAI")
+            
+            # Use the robust parsing method
+            graph_data = self._parse_llm_response(graph_text)
             return self._validate_and_format_graph(graph_data)
             
         except Exception as e:
-            print(f"OpenAI error: {e}")
+            logger.error(f"OpenAI extraction error: {e}")
             raise
     
     def _create_extraction_prompt(self, text: str) -> str:
